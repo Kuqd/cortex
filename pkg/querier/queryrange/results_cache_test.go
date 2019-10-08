@@ -39,7 +39,7 @@ var (
 					Labels: []client.LabelAdapter{
 						{Name: "foo", Value: "bar"},
 					},
-					Samples: []client.Sample{
+					Samples: []Sample{
 						{Value: 137, TimestampMs: 1536673680000},
 						{Value: 137, TimestampMs: 1536673780000},
 					},
@@ -58,7 +58,7 @@ var dummyResponse = &APIResponse{
 				Labels: []client.LabelAdapter{
 					{Name: "foo", Value: "bar"},
 				},
-				Samples: []client.Sample{
+				Samples: []Sample{
 					{
 						TimestampMs: 60,
 						Value:       60,

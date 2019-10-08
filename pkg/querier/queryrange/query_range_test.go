@@ -172,7 +172,7 @@ func TestMergeAPIResponses(t *testing.T) {
 						Result: []SampleStream{
 							{
 								Labels: []client.LabelAdapter{},
-								Samples: []client.Sample{
+								Samples: []Sample{
 									{Value: 0, TimestampMs: 0},
 									{Value: 1, TimestampMs: 1},
 								},
@@ -186,7 +186,7 @@ func TestMergeAPIResponses(t *testing.T) {
 						Result: []SampleStream{
 							{
 								Labels: []client.LabelAdapter{},
-								Samples: []client.Sample{
+								Samples: []Sample{
 									{Value: 2, TimestampMs: 2},
 									{Value: 3, TimestampMs: 3},
 								},
@@ -202,7 +202,7 @@ func TestMergeAPIResponses(t *testing.T) {
 					Result: []SampleStream{
 						{
 							Labels: []client.LabelAdapter{},
-							Samples: []client.Sample{
+							Samples: []Sample{
 								{Value: 0, TimestampMs: 0},
 								{Value: 1, TimestampMs: 1},
 								{Value: 2, TimestampMs: 2},
@@ -227,7 +227,7 @@ func TestMergeAPIResponses(t *testing.T) {
 					Result: []SampleStream{
 						{
 							Labels: []client.LabelAdapter{{Name: "a", Value: "b"}, {Name: "c", Value: "d"}},
-							Samples: []client.Sample{
+							Samples: []Sample{
 								{Value: 0, TimestampMs: 0},
 								{Value: 1, TimestampMs: 1000},
 								{Value: 2, TimestampMs: 2000},
@@ -251,7 +251,7 @@ func TestMergeAPIResponses(t *testing.T) {
 					Result: []SampleStream{
 						{
 							Labels: []client.LabelAdapter{{Name: "a", Value: "b"}, {Name: "c", Value: "d"}},
-							Samples: []client.Sample{
+							Samples: []Sample{
 								{Value: 1, TimestampMs: 1000},
 								{Value: 2, TimestampMs: 2000},
 								{Value: 3, TimestampMs: 3000},
