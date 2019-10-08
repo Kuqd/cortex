@@ -72,7 +72,7 @@ func (q Request) copy() Request {
 	return q
 }
 
-func (q Request) toHTTPRequest(ctx context.Context) (*http.Request, error) {
+func (q Request) ToHTTPRequest(ctx context.Context) (*http.Request, error) {
 	params := url.Values{
 		"start": []string{encodeTime(q.Start)},
 		"end":   []string{encodeTime(q.End)},

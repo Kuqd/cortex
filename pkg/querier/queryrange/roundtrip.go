@@ -170,7 +170,7 @@ type ToRoundTripperMiddleware struct {
 
 // Do implements Handler.
 func (q ToRoundTripperMiddleware) Do(ctx context.Context, r *Request) (*APIResponse, error) {
-	request, err := r.toHTTPRequest(ctx)
+	request, err := r.ToHTTPRequest(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -66,7 +66,7 @@ func TestRequest(t *testing.T) {
 			}
 			require.EqualValues(t, tc.expected, req)
 
-			rdash, err := req.toHTTPRequest(context.Background())
+			rdash, err := req.ToHTTPRequest(context.Background())
 			require.NoError(t, err)
 			require.EqualValues(t, tc.url, rdash.RequestURI)
 		})
