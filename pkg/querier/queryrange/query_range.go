@@ -168,8 +168,8 @@ func parseResponse(ctx context.Context, r *http.Response) (*APIResponse, error) 
 // UnmarshalJSON implements json.Unmarshaler.
 func (s *SampleStream) UnmarshalJSON(data []byte) error {
 	var stream struct {
-		Metric model.Metric    `json:"metric"`
-		Values []client.Sample `json:"values"`
+		Metric model.Metric `json:"metric"`
+		Values []Sample     `json:"values"`
 	}
 	if err := json.Unmarshal(data, &stream); err != nil {
 		return err
@@ -182,8 +182,8 @@ func (s *SampleStream) UnmarshalJSON(data []byte) error {
 // MarshalJSON implements json.Marshaler.
 func (s *SampleStream) MarshalJSON() ([]byte, error) {
 	stream := struct {
-		Metric model.Metric    `json:"metric"`
-		Values []client.Sample `json:"values"`
+		Metric model.Metric `json:"metric"`
+		Values []Sample     `json:"values"`
 	}{
 		Metric: client.FromLabelAdaptersToMetric(s.Labels),
 		Values: s.Samples,
@@ -236,7 +236,7 @@ func extractMatrix(start, end int64, matrix []SampleStream) []SampleStream {
 func extractSampleStream(start, end int64, stream SampleStream) (SampleStream, bool) {
 	result := SampleStream{
 		Labels:  stream.Labels,
-		Samples: make([]client.Sample, 0, len(stream.Samples)),
+		Samples: make([]Sample, 0, len(stream.Samples)),
 	}
 	for _, sample := range stream.Samples {
 		if start <= sample.TimestampMs && sample.TimestampMs <= end {

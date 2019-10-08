@@ -72,12 +72,78 @@ func nextDayBoundary(t, step int64) int64 {
 	return target
 }
 
-type requestResponse struct {
+type RequestResponse struct {
 	req  *Request
 	resp *APIResponse
 }
 
-func doRequests(ctx context.Context, downstream Handler, reqs []*Request, limits Limits) ([]requestResponse, error) {
+type RequestDispatcher interface {
+	Dispatch(ctx context.Context, downstream Handler, reqs []*Request) ([]RequestResponse, error)
+}
+
+type scheduler struct {
+	guard chan struct{}
+}
+
+func newScheduler(ctx context.Context, limits Limits) (*scheduler, error) {
+	userid, err := user.ExtractOrgID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	parallelism := limits.MaxQueryParallelism(userid)
+	guard := make(chan struct{}, parallelism)
+	return &scheduler{
+		guard: guard,
+	}, nil
+}
+
+func (s *scheduler) Dispatch(ctx context.Context, downstream Handler, reqs []*Request) ([]RequestResponse, error) {
+	// If one of the requests fail, we want to be able to cancel the rest of them.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Feed all requests to a bounded intermediate channel to limit parallelism.
+	intermediate := make(chan *Request)
+	go func() {
+		for _, req := range reqs {
+			intermediate <- req
+		}
+		close(intermediate)
+	}()
+	respChan, errChan := make(chan RequestResponse), make(chan error)
+	for i := 0; i < cap(s.guard); i++ {
+		s.guard <- struct{}{}
+		go func() {
+			for req := range intermediate {
+				resp, err := downstream.Do(ctx, req)
+				if err != nil {
+					errChan <- err
+				} else {
+					respChan <- RequestResponse{req, resp}
+				}
+			}
+			<-s.guard
+		}()
+	}
+
+	resps := make([]RequestResponse, 0, len(reqs))
+	var firstErr error
+	for range reqs {
+		select {
+		case resp := <-respChan:
+			resps = append(resps, resp)
+		case err := <-errChan:
+			if firstErr == nil {
+				cancel()
+				firstErr = err
+			}
+		}
+	}
+
+	return resps, firstErr
+}
+
+func doRequests(ctx context.Context, downstream Handler, reqs []*Request, limits Limits) ([]RequestResponse, error) {
 	userid, err := user.ExtractOrgID(ctx)
 	if err != nil {
 		return nil, err
@@ -96,7 +162,7 @@ func doRequests(ctx context.Context, downstream Handler, reqs []*Request, limits
 		close(intermediate)
 	}()
 
-	respChan, errChan := make(chan requestResponse), make(chan error)
+	respChan, errChan := make(chan RequestResponse), make(chan error)
 	parallelism := limits.MaxQueryParallelism(userid)
 	if parallelism > len(reqs) {
 		parallelism = len(reqs)
@@ -108,13 +174,13 @@ func doRequests(ctx context.Context, downstream Handler, reqs []*Request, limits
 				if err != nil {
 					errChan <- err
 				} else {
-					respChan <- requestResponse{req, resp}
+					respChan <- RequestResponse{req, resp}
 				}
 			}
 		}()
 	}
 
-	resps := make([]requestResponse, 0, len(reqs))
+	resps := make([]RequestResponse, 0, len(reqs))
 	var firstErr error
 	for range reqs {
 		select {

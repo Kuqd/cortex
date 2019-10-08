@@ -110,7 +110,7 @@ func (s resultsCache) handleMiss(ctx context.Context, r *Request) (*APIResponse,
 
 func (s resultsCache) handleHit(ctx context.Context, r *Request, extents []Extent) (*APIResponse, []Extent, error) {
 	var (
-		reqResps []requestResponse
+		reqResps []RequestResponse
 		err      error
 	)
 	log, ctx := spanlogger.New(ctx, "handleHit")

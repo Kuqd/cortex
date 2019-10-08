@@ -124,6 +124,11 @@ func NewTripperware(cfg Config, log log.Logger, limits Limits) (frontend.Tripper
 	}), nil
 }
 
+type Parser interface {
+	ParseRequest(r *http.Request) (*Request, error)
+	ParseResponse(ctx context.Context, r *http.Response) (*APIResponse, error)
+}
+
 // NewRoundTripper wraps a QueryRange Handler and allows it to send requests
 // to a http.Roundtripper.
 func NewRoundTripper(next http.RoundTripper, handler Handler, limits Limits) http.RoundTripper {
