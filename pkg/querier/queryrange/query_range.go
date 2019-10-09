@@ -21,7 +21,10 @@ import (
 	"github.com/cortexproject/cortex/pkg/ingester/client"
 )
 
-const statusSuccess = "success"
+const (
+	StatusSuccess = "success"
+	StatusFailure = "failure"
+)
 
 var (
 	matrix            = model.ValMatrix.String()
