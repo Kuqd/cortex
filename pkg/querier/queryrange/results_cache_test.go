@@ -50,7 +50,7 @@ var (
 )
 
 var dummyResponse = &APIResponse{
-	Status: statusSuccess,
+	Status: StatusSuccess,
 	Data: Response{
 		ResultType: matrix,
 		Result: []SampleStream{
@@ -79,7 +79,7 @@ func mkAPIResponse(start, end, step int64) *APIResponse {
 	}
 
 	return &APIResponse{
-		Status: statusSuccess,
+		Status: StatusSuccess,
 		Data: Response{
 			ResultType: matrix,
 			Result: []SampleStream{

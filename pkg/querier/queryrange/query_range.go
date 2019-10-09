@@ -21,7 +21,10 @@ import (
 	"github.com/cortexproject/cortex/pkg/ingester/client"
 )
 
-const statusSuccess = "success"
+const (
+	StatusSuccess = "success"
+	StatusFailure = "failure"
+)
 
 var (
 	matrix            = model.ValMatrix.String()
@@ -214,7 +217,7 @@ func (a *APIResponse) toHTTPResponse(ctx context.Context) (*http.Response, error
 
 func extract(start, end int64, extent Extent) *APIResponse {
 	return &APIResponse{
-		Status: statusSuccess,
+		Status: StatusSuccess,
 		Data: Response{
 			ResultType: extent.Response.Data.ResultType,
 			Result:     extractMatrix(start, end, extent.Response.Data.Result),
@@ -255,12 +258,12 @@ func mergeAPIResponses(responses []*APIResponse) (*APIResponse, error) {
 
 	if len(responses) == 0 {
 		return &APIResponse{
-			Status: statusSuccess,
+			Status: StatusSuccess,
 		}, nil
 	}
 
 	return &APIResponse{
-		Status: statusSuccess,
+		Status: StatusSuccess,
 		Data: Response{
 			ResultType: model.ValMatrix.String(),
 			Result:     matrixMerge(responses),
