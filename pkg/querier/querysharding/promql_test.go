@@ -19,7 +19,7 @@ import (
 
 var (
 	start  = time.Now()
-	end    = start.Add(1 * time.Minute)
+	end    = start.Add(2 * time.Minute)
 	step   = 30 * time.Second
 	ctx    = context.Background()
 	engine = promql.NewEngine(promql.EngineOpts{
@@ -32,6 +32,7 @@ var (
 	})
 )
 
+// This test allows to verify which PromQL expressions can be parallelized.
 func Test_PromQL(t *testing.T) {
 	t.Parallel()
 
@@ -40,6 +41,22 @@ func Test_PromQL(t *testing.T) {
 		shardQuery  string
 		shouldEqual bool
 	}{
+		// Vector can be parallelized but we need to remove the cortex shard label.
+		// It should be noted that the __cortex_shard__ label is required by the engine
+		// and therefore should be returned by the storage.
+		// Range vectors `bar1{baz="blip"}[1m]` are not tested here because it is not supported
+		// by range queries.
+		{
+			`bar1{baz="blip"}`,
+			`label_replace(
+				bar1{__cortex_shard__="0_of_3",baz="blip"} or
+				bar1{__cortex_shard__="1_of_3",baz="blip"} or
+				bar1{__cortex_shard__="2_of_3",baz="blip"},
+				"__cortex_shard__","","",""
+			)`,
+			true,
+		},
+		// __cortex_shard_ label is required otherwise the or will keep only the first series.
 		{
 			`sum(bar1{baz="blip"})`,
 			`sum(
@@ -61,18 +78,19 @@ func Test_PromQL(t *testing.T) {
 		{
 			`sum by (foo) (bar1{baz="blip"})`,
 			`sum by (foo) (
-				sum by(foo) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
-				sum by(foo) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
-				sum by(foo) (bar1{__cortex_shard__="2_of_3",baz="blip"})
-			  )`,
-			false,
-		},
-		{
-			`sum by (foo) (bar1{baz="blip"})`,
-			`sum by (foo) (
 				sum by(foo,__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
 				sum by(foo,__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
 				sum by(foo,__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			  )`,
+			true,
+		},
+		// __cortex_shard__ needs to be removed but after the or operation
+		{
+			`sum without (foo,bar) (bar1{baz="blip"})`,
+			` sum without (foo,bar,__cortex_shard__)(
+				sum without(foo,bar) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				sum without(foo,bar) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				sum without(foo,bar) (bar1{__cortex_shard__="2_of_3",baz="blip"})
 			  )`,
 			true,
 		},
@@ -85,6 +103,117 @@ func Test_PromQL(t *testing.T) {
 			  )`,
 			true,
 		},
+		{
+			`avg by (foo,bar) (bar1{baz="blip"})`,
+			` avg by (foo,bar)(
+				avg by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				avg by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				avg by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			  )`,
+			true,
+		},
+		{
+			`min by (foo,bar) (bar1{baz="blip"})`,
+			` min by (foo,bar)(
+				min by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				min by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				min by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			  )`,
+			true,
+		},
+		{
+			`max by (foo,bar) (bar1{baz="blip"})`,
+			` max by (foo,bar)(
+				max by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				max by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				max by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			  )`,
+			true,
+		},
+		// stddev can't be parallelized.
+		{
+			`stddev(bar1{baz="blip"})`,
+			` stddev(
+				stddev by(__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				stddev by(__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				stddev by(__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			  )`,
+			false,
+		},
+		// stdvar can't be parallelized.
+		{
+			`stdvar(bar1{baz="blip"})`,
+			`stdvar(
+				stdvar by(__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				stdvar by(__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				stdvar by(__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			  )`,
+			false,
+		},
+		{
+			`count(bar1{baz="blip"})`,
+			`count(
+				count without(__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				count without(__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				count without(__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+				)`,
+			true,
+		},
+		{
+			`count by (foo,bar) (bar1{baz="blip"})`,
+			`count by (foo,bar) (
+				count by (foo,bar) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				count by (foo,bar) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				count by (foo,bar) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			)`,
+			true,
+		},
+		// count without doesn't work not sure why yet.
+		{
+			`count without (foo) (bar1{baz="blip"})`,
+			`count without (foo,__cortex_shard__) (
+				count without (foo) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				count without (foo) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				count without (foo) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			)`,
+			false,
+		},
+		// {
+		// 	`sum by (foo,bar) (rate(bar1{baz="blip"}[1m]))`,
+		// 	` sum by (foo,bar)(
+		// 		sum by(foo,bar,__cortex_shard__) (rate(bar1{__cortex_shard__="0_of_3",baz="blip"}[1m])) or
+		// 		sum by(foo,bar,__cortex_shard__) (rate(bar1{__cortex_shard__="1_of_3",baz="blip"}[1m])) or
+		// 		sum by(foo,bar,__cortex_shard__) (rate(bar1{__cortex_shard__="2_of_3",baz="blip"}[1m]))
+		// 	  )`,
+		// 	true,
+		// },
+		// {
+		// 	`sum by (foo,bar) (count_over_time(bar1{baz="blip"}[1m]))`,
+		// 	` sum by (foo,bar)(
+		// 		sum by(foo,bar,__cortex_shard__) (count_over_time(bar1{__cortex_shard__="0_of_3",baz="blip"}[1m])) or
+		// 		sum by(foo,bar,__cortex_shard__) (count_over_time(bar1{__cortex_shard__="1_of_3",baz="blip"}[1m])) or
+		// 		sum by(foo,bar,__cortex_shard__) (count_over_time(bar1{__cortex_shard__="2_of_3",baz="blip"}[1m]))
+		// 	  )`,
+		// 	true,
+		// },
+		// {
+		// 	`sum by (foo,bar) (avg_over_time(bar1{baz="blip"}[1m]))`,
+		// 	` sum by (foo,bar)(
+		// 		sum by(foo,bar,__cortex_shard__) (avg_over_time(bar1{__cortex_shard__="0_of_3",baz="blip"}[1m])) or
+		// 		sum by(foo,bar,__cortex_shard__) (avg_over_time(bar1{__cortex_shard__="1_of_3",baz="blip"}[1m])) or
+		// 		sum by(foo,bar,__cortex_shard__) (avg_over_time(bar1{__cortex_shard__="2_of_3",baz="blip"}[1m]))
+		// 	  )`,
+		// 	true,
+		// },
+		// {
+		// 	`sum by (foo,bar) (min_over_time(bar1{baz="blip"}[1m]))`,
+		// 	` sum by (foo,bar)(
+		// 		sum by(foo,bar,__cortex_shard__) (min_over_time(bar1{__cortex_shard__="0_of_3",baz="blip"}[1m])) or
+		// 		sum by(foo,bar,__cortex_shard__) (min_over_time(bar1{__cortex_shard__="1_of_3",baz="blip"}[1m])) or
+		// 		sum by(foo,bar,__cortex_shard__) (min_over_time(bar1{__cortex_shard__="2_of_3",baz="blip"}[1m]))
+		// 	  )`,
+		// 	true,
+		// },
 	}
 
 	for _, tt := range tests {
@@ -98,8 +227,8 @@ func Test_PromQL(t *testing.T) {
 			require.Nil(t, err)
 			baseResult := baseQuery.Exec(ctx)
 			shardResult := shardQuery.Exec(ctx)
-			// t.Logf("base: %v\n", baseResult)
-			// t.Logf("shard: %v\n", shardResult)
+			t.Logf("base: %v\n", baseResult)
+			t.Logf("shard: %v\n", shardResult)
 			if tt.shouldEqual {
 				require.Equal(t, baseResult, shardResult)
 				return
@@ -172,7 +301,7 @@ func newSeries(metric labels.Labels, generator func(float64) float64) *promql.St
 	sort.Sort(metric)
 	var points []promql.Point
 
-	for ts := start; ts.Unix() <= end.Unix(); ts = ts.Add(step) {
+	for ts := start.Add(-step); ts.Unix() <= end.Unix(); ts = ts.Add(step) {
 		t := ts.Unix() * 1e3
 		points = append(points, promql.Point{
 			T: t,
