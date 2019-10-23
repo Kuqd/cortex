@@ -19,7 +19,7 @@ import (
 
 var (
 	start  = time.Now()
-	end    = start.Add(2 * time.Minute)
+	end    = start.Add(3 * time.Minute)
 	step   = 30 * time.Second
 	ctx    = context.Background()
 	engine = promql.NewEngine(promql.EngineOpts{
@@ -104,6 +104,15 @@ func Test_PromQL(t *testing.T) {
 			true,
 		},
 		{
+			`avg(bar1{baz="blip"})`,
+			` avg(
+				avg by(__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				avg by(__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				avg by(__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			  )`,
+			false,
+		},
+		{
 			`avg by (foo,bar) (bar1{baz="blip"})`,
 			` avg by (foo,bar)(
 				avg by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
@@ -111,6 +120,15 @@ func Test_PromQL(t *testing.T) {
 				avg by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
 			  )`,
 			true,
+		},
+		{
+			`avg without (foo) (bar1{baz="blip"})`,
+			` avg without (foo,__cortex_shard__)(
+				avg without(foo) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				avg without(foo) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				avg without(foo) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			  )`,
+			false,
 		},
 		{
 			`min by (foo,bar) (bar1{baz="blip"})`,
@@ -153,30 +171,38 @@ func Test_PromQL(t *testing.T) {
 		{
 			`count(bar1{baz="blip"})`,
 			`count(
-				count without(__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
-				count without(__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
-				count without(__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+				count without (__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				count without (__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				count without (__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
 				)`,
 			true,
 		},
 		{
 			`count by (foo,bar) (bar1{baz="blip"})`,
 			`count by (foo,bar) (
-				count by (foo,bar) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
-				count by (foo,bar) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
-				count by (foo,bar) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+				count by (foo,bar,__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				count by (foo,bar,__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				count by (foo,bar,__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
 			)`,
 			true,
 		},
-		// count without doesn't work not sure why yet.
 		{
 			`count without (foo) (bar1{baz="blip"})`,
-			`count without (foo,__cortex_shard__) (
-				count without (foo) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
-				count without (foo) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
-				count without (foo) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			`count without (foo) (
+				count without (__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				count without (__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				count without (__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
 			)`,
-			false,
+			true,
+		},
+		{
+			`topk(2,bar1{baz="blip"})`,
+			`topk(2,
+				topk(2,(bar1{__cortex_shard__="0_of_3",baz="blip"})) without(__cortex_shard__) or
+				topk(2,(bar1{__cortex_shard__="1_of_3",baz="blip"})) without(__cortex_shard__) or
+				topk(2,(bar1{__cortex_shard__="2_of_3",baz="blip"})) without(__cortex_shard__)
+			  )`,
+			true,
 		},
 		// {
 		// 	`sum by (foo,bar) (rate(bar1{baz="blip"}[1m]))`,
@@ -243,11 +269,11 @@ var shardAwareQueryable = storage.QueryableFunc(func(ctx context.Context, mint, 
 	return &matrix{
 		series: []*promql.StorageSeries{
 			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blop"}, {"foo", "barr"}}, factor(5)),
-			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blop"}, {"foo", "bazz"}}, factor(10)),
-			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blap"}, {"foo", "buzz"}}, factor(20)),
-			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blap"}, {"foo", "bozz"}}, factor(15)),
-			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blop"}, {"foo", "buzz"}}, factor(25)),
-			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blap"}, {"foo", "bazz"}}, factor(25)),
+			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blop"}, {"foo", "bazz"}}, factor(7)),
+			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blap"}, {"foo", "buzz"}}, factor(12)),
+			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blap"}, {"foo", "bozz"}}, factor(11)),
+			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blop"}, {"foo", "buzz"}}, factor(8)),
+			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blap"}, {"foo", "bazz"}}, identity),
 		},
 	}, nil
 })
