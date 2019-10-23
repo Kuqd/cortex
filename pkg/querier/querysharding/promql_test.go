@@ -3,6 +3,7 @@ package querysharding
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ import (
 
 var (
 	start  = time.Now()
-	end    = start.Add(time.Hour)
+	end    = start.Add(1 * time.Minute)
 	step   = 30 * time.Second
 	ctx    = context.Background()
 	engine = promql.NewEngine(promql.EngineOpts{
@@ -40,38 +41,47 @@ func Test_PromQL(t *testing.T) {
 		shouldEqual bool
 	}{
 		{
-			`sum by(foo) (rate(bar1{baz="blip"}[1m]))`,
-			`sum by(foo) (
-				sum by(foo) (rate(bar1{__cortex_shard__="0_of_3",baz="blip"}[1m])) or
-				sum by(foo) (rate(bar1{__cortex_shard__="1_of_3",baz="blip"}[1m])) or
-				sum by(foo) (rate(bar1{__cortex_shard__="2_of_3",baz="blip"}[1m]))
+			`sum(bar1{baz="blip"})`,
+			`sum(
+				sum (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				sum (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				sum (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			  )`,
+			false,
+		},
+		{
+			`sum(bar1{baz="blip"})`,
+			`sum(
+				sum by(__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				sum by(__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				sum by(__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
 			  )`,
 			true,
 		},
 		{
-			`sum by(foo) (rate(bar1{baz="blip"}[1m]))`,
-			`(
-				sum by(foo) (rate(bar1{__cortex_shard__="0_of_3",baz="blip"}[1m])) or
-				sum by(foo) (rate(bar1{__cortex_shard__="1_of_3",baz="blip"}[1m])) or
-				sum by(foo) (rate(bar1{__cortex_shard__="2_of_3",baz="blip"}[1m]))
+			`sum by (foo) (bar1{baz="blip"})`,
+			`sum by (foo) (
+				sum by(foo) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				sum by(foo) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				sum by(foo) (bar1{__cortex_shard__="2_of_3",baz="blip"})
+			  )`,
+			false,
+		},
+		{
+			`sum by (foo) (bar1{baz="blip"})`,
+			`sum by (foo) (
+				sum by(foo,__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				sum by(foo,__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				sum by(foo,__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
 			  )`,
 			true,
 		},
 		{
-			`avg by(foo) (rate(bar1{baz="blip"}[1m]))`,
-			`avg by(foo) (
-				avg by(foo) (rate(bar1{__cortex_shard__="0_of_3",baz="blip"}[1m])) or
-				avg by(foo) (rate(bar1{__cortex_shard__="1_of_3",baz="blip"}[1m])) or
-				avg by(foo) (rate(bar1{__cortex_shard__="2_of_3",baz="blip"}[1m]))
-			  )`,
-			true,
-		},
-		{
-			`avg by(foo) (rate(bar1{baz="blip"}[1m]))`,
-			`(
-				avg by(foo) (rate(bar1{__cortex_shard__="0_of_3",baz="blip"}[1m])) or
-				avg by(foo) (rate(bar1{__cortex_shard__="1_of_3",baz="blip"}[1m])) or
-				avg by(foo) (rate(bar1{__cortex_shard__="2_of_3",baz="blip"}[1m]))
+			`sum by (foo,bar) (bar1{baz="blip"})`,
+			` sum by (foo,bar)(
+				sum by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="0_of_3",baz="blip"}) or
+				sum by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="1_of_3",baz="blip"}) or
+				sum by(foo,bar,__cortex_shard__) (bar1{__cortex_shard__="2_of_3",baz="blip"})
 			  )`,
 			true,
 		},
@@ -88,6 +98,8 @@ func Test_PromQL(t *testing.T) {
 			require.Nil(t, err)
 			baseResult := baseQuery.Exec(ctx)
 			shardResult := shardQuery.Exec(ctx)
+			// t.Logf("base: %v\n", baseResult)
+			// t.Logf("shard: %v\n", shardResult)
 			if tt.shouldEqual {
 				require.Equal(t, baseResult, shardResult)
 				return
@@ -101,11 +113,12 @@ func Test_PromQL(t *testing.T) {
 var shardAwareQueryable = storage.QueryableFunc(func(ctx context.Context, mint, maxt int64) (storage.Querier, error) {
 	return &matrix{
 		series: []*promql.StorageSeries{
-			newSeries(labels.Labels{{"__name__", "bar1"}, {"foo", "bar"}, {"baz", "blip"}}, identity),
-			newSeries(labels.Labels{{"__name__", "bar1"}, {"foo", "bazz"}, {"baz", "blip"}}, identity),
-			newSeries(labels.Labels{{"__name__", "bar1"}, {"foo", "buzz"}, {"baz", "blip"}}, identity),
-			newSeries(labels.Labels{{"__name__", "bar1"}, {"foo", "bozz"}, {"baz", "blip"}}, identity),
-			newSeries(labels.Labels{{"__name__", "bar1"}, {"foo", "bizz"}, {"baz", "blip"}}, identity),
+			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blop"}, {"foo", "barr"}}, factor(5)),
+			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blop"}, {"foo", "bazz"}}, factor(10)),
+			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blap"}, {"foo", "buzz"}}, factor(20)),
+			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blap"}, {"foo", "bozz"}}, factor(15)),
+			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blop"}, {"foo", "buzz"}}, factor(25)),
+			newSeries(labels.Labels{{"__name__", "bar1"}, {"baz", "blip"}, {"bar", "blap"}, {"foo", "bazz"}}, factor(25)),
 		},
 	}, nil
 })
@@ -155,14 +168,15 @@ func (f *matrix) LabelValues(name string) ([]string, storage.Warnings, error) {
 func (f *matrix) LabelNames() ([]string, storage.Warnings, error) { return nil, nil, nil }
 func (f *matrix) Close() error                                    { return nil }
 
-func newSeries(metric labels.Labels, generator func(int64) float64) *promql.StorageSeries {
+func newSeries(metric labels.Labels, generator func(float64) float64) *promql.StorageSeries {
+	sort.Sort(metric)
 	var points []promql.Point
 
-	for ts := start; ts.Unix() < end.Unix(); ts = ts.Add(step) {
+	for ts := start; ts.Unix() <= end.Unix(); ts = ts.Add(step) {
 		t := ts.Unix() * 1e3
 		points = append(points, promql.Point{
 			T: t,
-			V: generator(t),
+			V: generator(float64(t)),
 		})
 	}
 
@@ -172,11 +186,24 @@ func newSeries(metric labels.Labels, generator func(int64) float64) *promql.Stor
 	})
 }
 
-func identity(t int64) float64 {
+func identity(t float64) float64 {
 	return float64(t)
 }
 
-// splitByShard returns also the shard subset of a matrix.
+func factor(f float64) func(float64) float64 {
+	i := 0.
+	return func(float64) float64 {
+		i++
+		res := i * f
+		return res
+	}
+}
+
+// var identity(t int64) float64 {
+// 	return float64(t)
+// }
+
+// splitByShard returns the shard subset of a matrix.
 // e.g if a matrix has 6 series, and we want 3 shard, then each shard will contain
 // 2 series.
 func splitByShard(shardIndex, shardTotal int, matrixes *matrix) *matrix {
