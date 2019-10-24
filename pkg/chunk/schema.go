@@ -9,6 +9,7 @@ import (
 
 	"strconv"
 
+	"github.com/cortexproject/cortex/pkg/querier/astmapper"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/pkg/labels"
 )
@@ -44,7 +45,7 @@ type Schema interface {
 	GetReadQueriesForMetric(from, through model.Time, userID string, metricName string) ([]IndexQuery, error)
 	GetReadQueriesForMetricLabel(from, through model.Time, userID string, metricName string, labelName string) ([]IndexQuery, error)
 	GetReadQueriesForMetricLabelValue(from, through model.Time, userID string, metricName string, labelName string, labelValue string) ([]IndexQuery, error)
-	FilterReadQueries(queries []IndexQuery, shard *int) []IndexQuery
+	FilterReadQueries(queries []IndexQuery, shard *astmapper.ShardAnnotation) []IndexQuery
 
 	// If the query resulted in series IDs, use this method to find chunks.
 	GetChunksForSeries(from, through model.Time, userID string, seriesID []byte) ([]IndexQuery, error)
@@ -199,7 +200,7 @@ func (s schema) GetChunksForSeries(from, through model.Time, userID string, seri
 	return result, nil
 }
 
-func (s schema) FilterReadQueries(queries []IndexQuery, shard *int) []IndexQuery {
+func (s schema) FilterReadQueries(queries []IndexQuery, shard *astmapper.ShardAnnotation) []IndexQuery {
 	return s.entries.FilterReadQueries(queries, shard)
 }
 
@@ -212,13 +213,13 @@ type entries interface {
 	GetReadMetricLabelQueries(bucket Bucket, metricName string, labelName string) ([]IndexQuery, error)
 	GetReadMetricLabelValueQueries(bucket Bucket, metricName string, labelName string, labelValue string) ([]IndexQuery, error)
 	GetChunksForSeries(bucket Bucket, seriesID []byte) ([]IndexQuery, error)
-	FilterReadQueries(queries []IndexQuery, shard *int) []IndexQuery
+	FilterReadQueries(queries []IndexQuery, shard *astmapper.ShardAnnotation) []IndexQuery
 }
 
 // noops is a placeholder which can be embedded to provide default implementations
 type noops struct{}
 
-func (n noops) FilterReadQueries(queries []IndexQuery, shard *int) []IndexQuery {
+func (n noops) FilterReadQueries(queries []IndexQuery, shard *astmapper.ShardAnnotation) []IndexQuery {
 	return queries
 }
 
@@ -762,11 +763,11 @@ func (v10Entries) GetChunksForSeries(bucket Bucket, seriesID []byte) ([]IndexQue
 }
 
 // FilterReadQueries will return only queries that match a certain shard
-func (v10Entries) FilterReadQueries(queries []IndexQuery, shard *int) (matches []IndexQuery) {
+func (v10Entries) FilterReadQueries(queries []IndexQuery, shard *astmapper.ShardAnnotation) (matches []IndexQuery) {
 	return defaultFilterReadQueries(queries, shard)
 }
 
-func defaultFilterReadQueries(queries []IndexQuery, shard *int) (matches []IndexQuery) {
+func defaultFilterReadQueries(queries []IndexQuery, shard *astmapper.ShardAnnotation) (matches []IndexQuery) {
 	if shard == nil {
 		return queries
 	}
@@ -774,7 +775,7 @@ func defaultFilterReadQueries(queries []IndexQuery, shard *int) (matches []Index
 	for _, query := range queries {
 		s := strings.Split(query.HashValue, ":")[0]
 		n, err := strconv.Atoi(s)
-		if err == nil && n == *shard {
+		if err == nil && n == shard.Shard {
 			matches = append(matches, query)
 		}
 	}
