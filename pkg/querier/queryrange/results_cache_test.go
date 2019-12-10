@@ -294,27 +294,27 @@ func Test_resultsCache_MissingData(t *testing.T) {
 	ctx := context.Background()
 
 	// fill up the cache
-	rc.put(ctx, "empty", []Extent{{
+	rc.cache.Put(ctx, "empty", []Extent{{
 		Start:    100,
 		End:      200,
 		Response: nil,
 	}})
-	rc.put(ctx, "notempty", []Extent{mkExtent(100, 120)})
-	rc.put(ctx, "mixed", []Extent{mkExtent(100, 120), {
+	rc.cache.Put(ctx, "notempty", []Extent{mkExtent(100, 120)})
+	rc.cache.Put(ctx, "mixed", []Extent{mkExtent(100, 120), {
 		Start:    120,
 		End:      200,
 		Response: nil,
 	}})
 
-	extents, hit := rc.get(ctx, "empty")
+	extents, hit := rc.cache.Get(ctx, "empty")
 	require.Empty(t, extents)
 	require.False(t, hit)
 
-	extents, hit = rc.get(ctx, "notempty")
+	extents, hit = rc.cache.Get(ctx, "notempty")
 	require.Equal(t, len(extents), 1)
 	require.True(t, hit)
 
-	extents, hit = rc.get(ctx, "mixed")
+	extents, hit = rc.cache.Get(ctx, "mixed")
 	require.Equal(t, len(extents), 0)
 	require.False(t, hit)
 }
