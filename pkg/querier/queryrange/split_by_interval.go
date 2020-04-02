@@ -74,11 +74,11 @@ func splitQuery(r Request, interval time.Duration) []Request {
 // Round up to the step before the next interval boundary.
 func nextIntervalBoundary(t time.Time, step time.Duration, interval time.Duration) time.Time {
 	msPerInterval := int64(interval / time.Millisecond)
-	startOfNextInterval := ((t / msPerInterval) + 1) * msPerInterval
+	startOfNextInterval := ((t.UnixNano() / interval.Nanoseconds()) + 1) * interval.Nanoseconds()
 	// ensure that target is a multiple of steps away from the start time
-	target := startOfNextInterval - ((startOfNextInterval - t) % step)
+	target := startOfNextInterval - ((startOfNextInterval - t.UnixNano()) % step.Nanoseconds())
 	if target == startOfNextInterval {
-		target -= step
+		target -= step.Nanoseconds()
 	}
-	return target
+	return time.Unix(0, target)
 }
