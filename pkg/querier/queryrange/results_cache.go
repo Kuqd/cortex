@@ -70,7 +70,7 @@ type constSplitter time.Duration
 
 // GenerateCacheKey generates a cache key based on the userID, Request and interval.
 func (t constSplitter) GenerateCacheKey(userID string, r Request) string {
-	currentInterval := r.GetStart() / int64(time.Duration(t)/time.Millisecond)
+	currentInterval := r.GetStart().UnixNano() / int64(t)
 	return fmt.Sprintf("%s:%s:%d:%d", userID, r.GetQuery(), r.GetStep(), currentInterval)
 }
 

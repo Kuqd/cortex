@@ -60,9 +60,9 @@ func (s splitByInterval) Do(ctx context.Context, r Request) (Response, error) {
 
 func splitQuery(r Request, interval time.Duration) []Request {
 	var reqs []Request
-	for start := r.GetStart(); start < r.GetEnd(); start = nextIntervalBoundary(start, r.GetStep(), interval) + r.GetStep() {
+	for start := r.GetStart(); start.Before(r.GetEnd()); start = nextIntervalBoundary(start, r.GetStep(), interval).Add(r.GetStep()) {
 		end := nextIntervalBoundary(start, r.GetStep(), interval)
-		if end+r.GetStep() >= r.GetEnd() {
+		if end.Add(r.GetStep()).Equal(r.GetEnd()) || end.After(r.GetEnd()) {
 			end = r.GetEnd()
 		}
 
@@ -72,7 +72,7 @@ func splitQuery(r Request, interval time.Duration) []Request {
 }
 
 // Round up to the step before the next interval boundary.
-func nextIntervalBoundary(t, step int64, interval time.Duration) int64 {
+func nextIntervalBoundary(t time.Time, step time.Duration, interval time.Duration) time.Time {
 	msPerInterval := int64(interval / time.Millisecond)
 	startOfNextInterval := ((t / msPerInterval) + 1) * msPerInterval
 	// ensure that target is a multiple of steps away from the start time

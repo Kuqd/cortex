@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/prometheus/prometheus/pkg/timestamp"
 	"github.com/weaveworks/common/httpgrpc"
 	"github.com/weaveworks/common/user"
 
@@ -41,7 +40,7 @@ func (l limits) Do(ctx context.Context, r Request) (Response, error) {
 	}
 
 	maxQueryLen := l.MaxQueryLength(userid)
-	queryLen := timestamp.Time(r.GetEnd()).Sub(timestamp.Time(r.GetStart()))
+	queryLen := r.GetEnd().Sub(r.GetStart())
 	if maxQueryLen != 0 && queryLen > maxQueryLen {
 		return nil, httpgrpc.Errorf(http.StatusBadRequest, validation.ErrQueryTooLong, queryLen, maxQueryLen)
 	}

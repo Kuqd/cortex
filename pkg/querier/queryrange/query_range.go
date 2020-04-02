@@ -16,7 +16,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	otlog "github.com/opentracing/opentracing-go/log"
 	"github.com/prometheus/common/model"
-	"github.com/prometheus/prometheus/pkg/timestamp"
 	"github.com/weaveworks/common/httpgrpc"
 
 	"github.com/cortexproject/cortex/pkg/ingester/client"
@@ -63,16 +62,16 @@ type Merger interface {
 
 // Request represents a query range request that can be process by middlewares.
 type Request interface {
-	// GetStart returns the start timestamp of the request in milliseconds.
-	GetStart() int64
-	// GetEnd returns the end timestamp of the request in milliseconds.
-	GetEnd() int64
-	// GetStep returns the step of the request in milliseconds.
-	GetStep() int64
-	// GetQuery returns the query of the request.
+	// GetStart returns the start time of the request.
+	GetStart() time.Time
+	// End returns the end time of the request.
+	GetEnd() time.Time
+	// GetStep returns the step of the request.
+	GetStep() time.Duration
+	// Query returns the query of the request.
 	GetQuery() string
 	// WithStartEnd clone the current request with different start and end timestamp.
-	WithStartEnd(int64, int64) Request
+	WithStartEnd(time.Time, time.Time) Request
 	// WithQuery clone the current request with a different query.
 	WithQuery(string) Request
 	proto.Message
@@ -88,16 +87,16 @@ type Response interface {
 func LogToSpan(ctx context.Context, r Request) {
 	if span := opentracing.SpanFromContext(ctx); span != nil {
 		span.LogFields(otlog.String("query", r.GetQuery()),
-			otlog.String("start", timestamp.Time(r.GetStart()).String()),
-			otlog.String("end", timestamp.Time(r.GetEnd()).String()),
-			otlog.Int64("step (ms)", r.GetStep()))
+			otlog.String("start", r.GetStart().String()),
+			otlog.String("end", r.GetEnd().String()),
+			otlog.String("step", r.GetStep().String()))
 	}
 }
 
 type prometheusCodec struct{}
 
 // WithStartEnd clones the current `PrometheusRequest` with a new `start` and `end` timestamp.
-func (q *PrometheusRequest) WithStartEnd(start int64, end int64) Request {
+func (q *PrometheusRequest) WithStartEnd(start, end time.Time) Request {
 	new := *q
 	new.Start = start
 	new.End = end
@@ -153,18 +152,19 @@ func (prometheusCodec) MergeResponse(responses ...Response) (Response, error) {
 
 func (prometheusCodec) DecodeRequest(_ context.Context, r *http.Request) (Request, error) {
 	var result PrometheusRequest
-	var err error
-	result.Start, err = util.ParseTime(r.FormValue("start"))
+	startMs, err := util.ParseTime(r.FormValue("start"))
 	if err != nil {
 		return nil, err
 	}
+	result.Start = model.Time(startMs).Time()
 
-	result.End, err = util.ParseTime(r.FormValue("end"))
+	endMs, err := util.ParseTime(r.FormValue("end"))
 	if err != nil {
 		return nil, err
 	}
+	result.End = model.Time(endMs).Time()
 
-	if result.End < result.Start {
+	if result.End.Before(result.Start) {
 		return nil, errEndBeforeStart
 	}
 
@@ -179,7 +179,7 @@ func (prometheusCodec) DecodeRequest(_ context.Context, r *http.Request) (Reques
 
 	// For safety, limit the number of returned points per timeseries.
 	// This is sufficient for 60s resolution for a week or 1h resolution for a year.
-	if (result.End-result.Start)/result.Step > 11000 {
+	if (result.End.UnixNano()-result.Start.UnixNano())/result.Step.Nanoseconds() > 11000 {
 		return nil, errStepTooSmall
 	}
 
@@ -331,25 +331,25 @@ func matrixMerge(resps []*PrometheusResponse) []SampleStream {
 	return result
 }
 
-func parseDurationMs(s string) (int64, error) {
+func parseDurationMs(s string) (time.Duration, error) {
 	if d, err := strconv.ParseFloat(s, 64); err == nil {
 		ts := d * float64(time.Second/time.Millisecond)
 		if ts > float64(math.MaxInt64) || ts < float64(math.MinInt64) {
 			return 0, httpgrpc.Errorf(http.StatusBadRequest, "cannot parse %q to a valid duration. It overflows int64", s)
 		}
-		return int64(ts), nil
+		return time.Duration(int64(ts)) * (time.Millisecond), nil
 	}
 	if d, err := model.ParseDuration(s); err == nil {
-		return int64(d) / int64(time.Millisecond/time.Nanosecond), nil
+		return time.Duration(d), nil
 	}
 	return 0, httpgrpc.Errorf(http.StatusBadRequest, "cannot parse %q to a valid duration", s)
 }
 
-func encodeTime(t int64) string {
-	f := float64(t) / 1.0e3
+func encodeTime(t time.Time) string {
+	f := float64(t.UnixNano()) / 1.0e6
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
-func encodeDurationMs(d int64) string {
-	return strconv.FormatFloat(float64(d)/float64(time.Second/time.Millisecond), 'f', -1, 64)
+func encodeDurationMs(d time.Duration) string {
+	return strconv.FormatFloat(float64(d)/float64(time.Second), 'f', -1, 64)
 }

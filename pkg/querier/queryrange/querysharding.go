@@ -48,7 +48,7 @@ func (confs ShardingConfigs) ValidRange(start, end int64) (chunk.PeriodConfig, e
 
 // GetConf will extract a shardable config corresponding to a request and the shardingconfigs
 func (confs ShardingConfigs) GetConf(r Request) (chunk.PeriodConfig, error) {
-	conf, err := confs.ValidRange(r.GetStart(), r.GetEnd())
+	conf, err := confs.ValidRange(TimeToMillis(r.GetStart()), TimeToMillis(r.GetEnd()))
 
 	// query exists across multiple sharding configs
 	if err != nil {
@@ -214,9 +214,9 @@ func (qs *queryShard) Do(ctx context.Context, r Request) (Response, error) {
 	qry, err := qs.engine.NewRangeQuery(
 		queryable,
 		r.GetQuery(),
-		TimeFromMillis(r.GetStart()),
-		TimeFromMillis(r.GetEnd()),
-		time.Duration(r.GetStep())*time.Millisecond,
+		r.GetStart(),
+		r.GetEnd(),
+		r.GetStep(),
 	)
 
 	if err != nil {
@@ -308,16 +308,15 @@ func (splitter *shardSplitter) parallel(ctx context.Context, sharded, nonsharded
 // partitionQuery splits a request into potentially multiple requests, one including the request's time range
 // [0,t). The other will include [t,inf)
 func partitionRequest(r Request, t time.Time) (before Request, after Request) {
-	boundary := TimeToMillis(t)
-	if r.GetStart() >= boundary {
+	if r.GetStart().After(t) || r.GetEnd().Equal(t) {
 		return nil, r
 	}
 
-	if r.GetEnd() < boundary {
+	if r.GetEnd().Before(t) {
 		return r, nil
 	}
 
-	return r.WithStartEnd(r.GetStart(), boundary), r.WithStartEnd(boundary, r.GetEnd())
+	return r.WithStartEnd(r.GetStart(), t), r.WithStartEnd(t, r.GetEnd())
 }
 
 // TimeFromMillis is a helper to turn milliseconds -> time.Time
