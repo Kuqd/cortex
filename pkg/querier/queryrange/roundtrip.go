@@ -57,6 +57,7 @@ type Config struct {
 	CacheResults           bool `yaml:"cache_results"`
 	MaxRetries             int  `yaml:"max_retries"`
 	ShardedQueries         bool `yaml:"parallelise_shardable_queries"`
+	TotalShards            int  `yaml:"total_shards"`
 }
 
 // RegisterFlags adds the flags required to config this to the given FlagSet.
@@ -66,6 +67,7 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
 	f.BoolVar(&cfg.AlignQueriesWithStep, "querier.align-querier-with-step", false, "Mutate incoming queries to align their start and end with their step.")
 	f.BoolVar(&cfg.CacheResults, "querier.cache-results", false, "Cache query results.")
 	f.BoolVar(&cfg.ShardedQueries, "querier.parallelise-shardable-queries", false, "Perform query parallelisations based on storage sharding configuration and query ASTs. This feature is supported only by the chunks storage engine.")
+	f.IntVar(&cfg.TotalShards, "querier.total-shards", 32, "The amount of shards to used when doing parallelisation via query sharding. (only used for TSDB storage)")
 	cfg.ResultsCacheConfig.RegisterFlags(f)
 }
 
@@ -182,24 +184,33 @@ func NewTripperware(
 	}
 
 	if cfg.ShardedQueries {
-		if minShardingLookback == 0 {
-			return nil, nil, errInvalidMinShardingLookback
+		if len(schema.Configs) == 0 {
+			// we assume we're using tsdb if we activate sharding without schema.
+			queryRangeMiddleware = append(
+				queryRangeMiddleware,
+				InstrumentMiddleware("query_sharding", metrics),
+				NewTSDBQueryShardMiddleware(log, promql.NewEngine(engineOpts), cfg.TotalShards, registerer),
+			)
+		} else {
+			if minShardingLookback == 0 {
+				return nil, nil, errInvalidMinShardingLookback
+			}
+
+			shardingware := NewQueryShardMiddleware(
+				log,
+				promql.NewEngine(engineOpts),
+				schema.Configs,
+				codec,
+				minShardingLookback,
+				metrics,
+				registerer,
+			)
+
+			queryRangeMiddleware = append(
+				queryRangeMiddleware,
+				shardingware, // instrumentation is included in the sharding middleware
+			)
 		}
-
-		shardingware := NewQueryShardMiddleware(
-			log,
-			promql.NewEngine(engineOpts),
-			schema.Configs,
-			codec,
-			minShardingLookback,
-			metrics,
-			registerer,
-		)
-
-		queryRangeMiddleware = append(
-			queryRangeMiddleware,
-			shardingware, // instrumentation is included in the sharding middleware
-		)
 	}
 
 	if cfg.MaxRetries > 0 {
@@ -256,7 +267,6 @@ func NewRoundTripper(next http.RoundTripper, codec Codec, middlewares ...Middlew
 }
 
 func (q roundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
-
 	request, err := q.codec.DecodeRequest(r.Context(), r)
 	if err != nil {
 		return nil, err

@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -22,7 +23,7 @@ import (
 )
 
 func TestQueryshardingMiddleware(t *testing.T) {
-	var testExpr = []struct {
+	testExpr := []struct {
 		name     string
 		next     Handler
 		input    Request
@@ -60,7 +61,6 @@ func TestQueryshardingMiddleware(t *testing.T) {
 			name: "successful trip",
 			next: mockHandlerWith(sampleMatrixResponse(), nil),
 			override: func(t *testing.T, handler Handler) {
-
 				// pre-encode the query so it doesn't try to re-split. We're just testing if it passes through correctly
 				qry := defaultReq().WithQuery(
 					`__embedded_queries__{__cortex_queries__="{\"Concat\":[\"http_requests_total{cluster=\\\"prod\\\"}\"]}"}`,
@@ -110,7 +110,6 @@ func TestQueryshardingMiddleware(t *testing.T) {
 				require.Nil(t, err)
 				require.Equal(t, c.expected, out)
 			}
-
 		})
 	}
 }
@@ -194,7 +193,7 @@ func TestShardingConfigs_ValidRange(t *testing.T) {
 		return r
 	}
 
-	var testExpr = []struct {
+	testExpr := []struct {
 		name     string
 		confs    ShardingConfigs
 		req      *PrometheusRequest
@@ -424,7 +423,6 @@ func TestQueryshardingCorrectness(t *testing.T) {
 }
 
 func TestShardSplitting(t *testing.T) {
-
 	for _, tc := range []struct {
 		desc        string
 		lookback    time.Duration
@@ -496,14 +494,11 @@ func TestShardSplitting(t *testing.T) {
 			require.Nil(t, err)
 
 			approximatelyEquals(t, unaltered.(*PrometheusResponse), resp.(*PrometheusResponse))
-
 		})
 	}
-
 }
 
 func BenchmarkQuerySharding(b *testing.B) {
-
 	var shards []uint32
 
 	// max out at half available cpu cores in order to minimize noisy neighbor issues while benchmarking
@@ -642,7 +637,6 @@ func (h *downstreamHandler) Do(ctx context.Context, r Request) (Response, error)
 		util.TimeFromMillis(r.GetEnd()),
 		time.Duration(r.GetStep())*time.Millisecond,
 	)
-
 	if err != nil {
 		return nil, err
 	}
@@ -651,7 +645,6 @@ func (h *downstreamHandler) Do(ctx context.Context, r Request) (Response, error)
 	extracted, err := FromResult(res)
 	if err != nil {
 		return nil, err
-
 	}
 
 	return &PrometheusResponse{
@@ -661,4 +654,100 @@ func (h *downstreamHandler) Do(ctx context.Context, r Request) (Response, error)
 			Result:     extracted,
 		},
 	}, nil
+}
+
+func Test_TSDBSharding(t *testing.T) {
+	// todo more test with table testing.
+	sharding := NewTSDBQueryShardMiddleware(
+		log.NewNopLogger(),
+		promql.NewEngine(promql.EngineOpts{
+			Timeout:    30 * time.Second,
+			MaxSamples: 10000000,
+		}),
+		3,
+		prometheus.NewPedanticRegistry())
+
+	req := &PrometheusRequest{
+		Start: 11,
+		End:   11,
+		Step:  1,
+		Query: `sum by (foo) (rate(test{bar="buzz"}[1m]))`,
+	}
+	response, err := sharding.Wrap(
+		mockDownStreamHandler(map[string][]SampleStream{
+			`sum by(foo, __cortex_shard__) (rate(test{__cortex_shard__="0_of_3",bar="buzz"}[1m]))`: {
+				{
+					Labels: []cortexpb.LabelAdapter{
+						{Name: "__cortex_shard__", Value: "0_of_3"}, {Name: "foo", Value: "bar"},
+					},
+					Samples: []cortexpb.Sample{
+						{
+							TimestampMs: 11,
+							Value:       2,
+						},
+					},
+				},
+			},
+			`sum by(foo, __cortex_shard__) (rate(test{__cortex_shard__="1_of_3",bar="buzz"}[1m]))`: {
+				{
+					Labels: []cortexpb.LabelAdapter{
+						{Name: "__cortex_shard__", Value: "1_of_3"},
+						{Name: "foo", Value: "buzz"},
+					},
+					Samples: []cortexpb.Sample{
+						{
+							TimestampMs: 11,
+							Value:       2,
+						},
+					},
+				},
+			},
+			`sum by(foo, __cortex_shard__) (rate(test{__cortex_shard__="2_of_3",bar="buzz"}[1m]))`: {
+				{
+					Labels: []cortexpb.LabelAdapter{
+						{Name: "__cortex_shard__", Value: "2_of_3"},
+						{Name: "foo", Value: "boo"},
+					},
+					Samples: []cortexpb.Sample{
+						{
+							TimestampMs: 11,
+							Value:       4,
+						},
+					},
+				},
+			},
+		})).Do(context.Background(), req)
+	require.Nil(t, err)
+	require.Equal(t, []SampleStream{
+		{
+			Labels:  []cortexpb.LabelAdapter{{Name: "foo", Value: "bar"}},
+			Samples: []cortexpb.Sample{{Value: 2, TimestampMs: 11}},
+		},
+		{
+			Labels:  []cortexpb.LabelAdapter{{Name: "foo", Value: "boo"}},
+			Samples: []cortexpb.Sample{{Value: 4, TimestampMs: 11}},
+		},
+		{
+			Labels:  []cortexpb.LabelAdapter{{Name: "foo", Value: "buzz"}},
+			Samples: []cortexpb.Sample{{Value: 2, TimestampMs: 11}},
+		},
+	}, response.(*PrometheusResponse).Data.Result)
+}
+
+func mockDownStreamHandler(response map[string][]SampleStream) Handler {
+	return HandlerFunc(func(ctx context.Context, req Request) (Response, error) {
+		if expired := ctx.Err(); expired != nil {
+			return nil, expired
+		}
+		if res, ok := response[req.GetQuery()]; ok {
+			return &PrometheusResponse{
+				Status: StatusSuccess,
+				Data: PrometheusData{
+					ResultType: string(parser.ValueTypeMatrix),
+					Result:     res,
+				},
+			}, nil
+		}
+		return nil, errors.Errorf("unexpected query: %q", req.GetQuery())
+	})
 }
